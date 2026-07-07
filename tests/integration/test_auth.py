@@ -5,11 +5,20 @@ pytestmark = pytest.mark.asyncio
 
 
 async def register(
-    client: AsyncClient, username="alice", email="alice@example.com", password="supersecret"
+    client: AsyncClient,
+    username="alice",
+    email="alice@example.com",
+    full_name="Alice Example",
+    password="supersecret",
 ):
     return await client.post(
         "/api/v1/auth/register",
-        json={"username": username, "email": email, "password": password},
+        json={
+            "username": username,
+            "email": email,
+            "full_name": full_name,
+            "password": password,
+        },
     )
 
 

@@ -7,8 +7,9 @@ from app.exceptions.base import NotFoundException
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 from app.schemas.follow import FollowOut
-from app.schemas.user import UserOut, UserPublicOut
+from app.schemas.user import UserOut, UserPublicOut, UserUpdateIn
 from app.services.follow_service import FollowService
+from app.services.user_service import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -16,6 +17,18 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.get("/me", response_model=UserOut)
 async def get_me(current_user: User = Depends(get_current_user)) -> UserOut:
     return UserOut.model_validate(current_user)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    payload: UserUpdateIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    user = await UserService(db).update_profile(
+        user=current_user, username=payload.username, full_name=payload.full_name
+    )
+    return UserOut.model_validate(user)
 
 
 @router.get("/{username}", response_model=UserPublicOut)

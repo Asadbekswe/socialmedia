@@ -14,7 +14,12 @@ pytestmark = pytest.mark.asyncio
 async def _register_and_get_raw_token(client: AsyncClient, db_session: AsyncSession) -> str:
     await client.post(
         "/api/v1/auth/register",
-        json={"username": "eve", "email": "eve@example.com", "password": "supersecret"},
+        json={
+            "username": "eve",
+            "email": "eve@example.com",
+            "full_name": "Eve Example",
+            "password": "supersecret",
+        },
     )
     user = await UserRepository(db_session).get_by_email("eve@example.com")
 
@@ -50,7 +55,12 @@ async def test_verify_with_valid_token_marks_user_verified(
 async def test_verify_with_expired_token_rejected(client: AsyncClient, db_session: AsyncSession):
     await client.post(
         "/api/v1/auth/register",
-        json={"username": "frank", "email": "frank@example.com", "password": "supersecret"},
+        json={
+            "username": "frank",
+            "email": "frank@example.com",
+            "full_name": "Frank Example",
+            "password": "supersecret",
+        },
     )
     user = await UserRepository(db_session).get_by_email("frank@example.com")
     raw_token = "expired-token-value"

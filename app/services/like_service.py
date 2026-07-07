@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions.base import NotFoundException
+from app.exceptions.base import BadRequestException, NotFoundException
 from app.repositories.like_repository import LikeRepository
 from app.repositories.post_repository import PostRepository
 
@@ -22,8 +22,11 @@ class LikeService:
         self.posts = PostRepository(session)
 
     async def like_post(self, *, user_id: UUID, post_id: UUID) -> LikeResult:
-        if await self.posts.get_by_id(post_id) is None:
+        post = await self.posts.get_by_id(post_id)
+        if post is None:
             raise NotFoundException("Post not found")
+        if post.author_id == user_id:
+            raise BadRequestException("You cannot like your own post")
 
         try:
             async with self.session.begin_nested():

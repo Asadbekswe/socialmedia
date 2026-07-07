@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +20,8 @@ class PostService:
         self.likes = LikeRepository(session)
         self.users = UserRepository(session)
 
-    async def create_post(self, *, author: User, content: str) -> Post:
-        post = await self.posts.create(author_id=author.id, content=content)
+    async def create_post(self, *, author: User, title: str, content: str) -> Post:
+        post = await self.posts.create(author_id=author.id, title=title, content=content)
         await self.session.flush()
         post.author = author
         post.like_count = 0
@@ -40,6 +41,33 @@ class PostService:
         )
         return post
 
+    async def get_post_detail(self, post_id: UUID, *, viewer_id: UUID | None = None) -> Post:
+        post = await self.posts.get_by_id_with_comments(post_id)
+        if post is None:
+            raise NotFoundException("Post not found")
+
+        post.like_count = await self.likes.count_for_post(post_id)
+        post.liked_by_me = (
+            await self.likes.exists(user_id=viewer_id, post_id=post_id)
+            if viewer_id is not None
+            else False
+        )
+        return post
+
+    async def update_post(
+        self, *, user: User, post_id: UUID, title: str | None, content: str | None
+    ) -> Post:
+        post = await self.get_post(post_id)
+        if post.author_id != user.id:
+            raise ForbiddenException("You can only edit your own posts")
+
+        if title is not None:
+            post.title = title
+        if content is not None:
+            post.content = content
+        await self.session.flush()
+        return post
+
     async def delete_post(self, *, user: User, post_id: UUID) -> None:
         post = await self.get_post(post_id)
         if post.author_id != user.id:
@@ -51,6 +79,8 @@ class PostService:
         *,
         author_username: str | None,
         q: str | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
         viewer_id: UUID | None,
         page: int,
         size: int,
@@ -66,6 +96,8 @@ class PostService:
         rows, total = await self.posts.list_paginated(
             author_id=author_id,
             q=q,
+            date_from=date_from,
+            date_to=date_to,
             viewer_id=viewer_id,
             limit=size,
             offset=(page - 1) * size,

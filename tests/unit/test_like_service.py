@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.exceptions.base import NotFoundException
+from app.exceptions.base import BadRequestException, NotFoundException
 from app.services.like_service import LikeService
 
 
@@ -39,6 +39,16 @@ async def test_like_post_raises_not_found_when_post_missing():
 
     with pytest.raises(NotFoundException):
         await service.like_post(user_id=uuid4(), post_id=uuid4())
+
+
+async def test_like_post_rejects_liking_own_post():
+    user_id = uuid4()
+    service = _make_service()
+    service.posts.get_by_id = AsyncMock(return_value=MagicMock(author_id=user_id))
+
+    with pytest.raises(BadRequestException):
+        await service.like_post(user_id=user_id, post_id=uuid4())
+    service.likes.create.assert_not_awaited()
 
 
 async def test_like_post_succeeds_on_first_like():

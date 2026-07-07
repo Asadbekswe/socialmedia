@@ -1,13 +1,17 @@
 # Mini Social Network
 
 A production-shaped backend for a small social network: registration with email
-verification, JWT auth, posts, likes, follows, a personalized feed, search/pagination,
-and a Celery-scheduled cleanup job — built with FastAPI and async SQLAlchemy over
+verification, JWT auth, posts with comments and likes, a `/all` global listing,
+follows and a personalized feed, search/pagination/date-filtering, and two
+Celery-scheduled cleanup jobs — built with FastAPI and async SQLAlchemy over
 PostgreSQL.
 
 The full architectural rationale (why each layer/technology/pattern was chosen, and
 the trade-offs considered) lives in the accompanying design dossier; this README is
 the practical "get it running" reference.
+
+Follows/personalized-feed (`/feed`, follow/unfollow) are extra scope beyond the base
+requirements, kept in alongside the core spec (users, posts, comments, likes, `/all`).
 
 ## Tech stack
 
@@ -35,18 +39,36 @@ Routers know HTTP, not SQL. Services know business rules, not SQL or HTTP. Repos
 know SQL for one aggregate, not business rules. Dependencies always point inward —
 `app/api` is the only layer allowed to import FastAPI.
 
+## Permissions
+
+| Action | Anonymous | Logged in, unverified | Verified |
+|---|---|---|---|
+| Browse/search posts, `GET /all`, view a post + its comments | ✅ | ✅ | ✅ |
+| Login, `GET /users/me` | — | ✅ | ✅ |
+| Like / unlike a post (not your own) | 401 | ✅ | ✅ |
+| Like your own post | — | 400 | 400 |
+| Create/edit/delete your own post | 401 | 403 | ✅ |
+| Create/delete your own comment | 401 | 403 | ✅ |
+| Edit/delete someone else's post or comment | 401 | 403 | 403 |
+
+401 = not authenticated at all; 403 = known identity, not permitted (unverified, or
+not the owner); 404 = the resource genuinely doesn't exist.
+
 ## ER diagram
 
 ```
-users ──1───N── posts ──1───N── likes ──N───1── users
-  │                                              │
-  └──────────────1───N── verification_tokens     │
-  │                                               │
-  └──N───N── follows (follower_id, followee_id) ──┘
+users ──1───N── posts ──1───N── comments ──N───1── users
+  │                │
+  │                └──1───N── likes ──N───1── users
+  │
+  ├──────1───N── verification_tokens
+  │
+  └──N───N── follows (follower_id, followee_id)
 ```
 
-- `users`: `UNIQUE(username)`, `UNIQUE(email)`
-- `posts`: `FK author_id -> users.id ON DELETE CASCADE`, `CHECK(1 <= len(content) <= 500)`, index on `(author_id, created_at)`
+- `users`: `UNIQUE(username)`, `UNIQUE(email)`, `full_name`
+- `posts`: `FK author_id -> users.id ON DELETE CASCADE`, `title CHECK(5-255)`, `content CHECK(1-10000)`, index on `(author_id, created_at)`
+- `comments`: `FK post_id -> posts.id ON DELETE CASCADE`, `FK author_id -> users.id ON DELETE CASCADE`, `content CHECK(1-2000)`
 - `likes`: `UNIQUE(user_id, post_id)` — the actual race-condition defense for double-likes
 - `follows`: composite `PK(follower_id, followee_id)`, `CHECK(follower_id <> followee_id)`
 - `verification_tokens`: `UNIQUE(token_hash)`, index on `expires_at` (used by the cleanup job)
@@ -94,7 +116,7 @@ Postgres/Redis healthchecks *and* on `migrate` exiting successfully before they 
 | `db` | PostgreSQL 16, named volume `pgdata` |
 | `redis` | Celery broker + result backend |
 | `celery-worker` | Executes tasks: sending verification emails, token cleanup |
-| `celery-beat` | Schedules `cleanup_expired_tokens` hourly |
+| `celery-beat` | Schedules the hourly cleanup tasks (see below) |
 
 `migrate` is deliberately a single dedicated service rather than each service
 migrating itself on startup — three containers all running `alembic upgrade head`
@@ -130,17 +152,24 @@ docker compose exec app alembic revision --autogenerate -m "add comments table"
 # review the generated script by hand before committing - autogenerate
 # misses some renames/constraint changes
 
-# apply it (or just restart the app container - the entrypoint does this for you)
+# apply it (or just `docker compose up` again - the migrate service does this for you)
 docker compose exec app alembic upgrade head
 ```
 
 ## Celery
 
+Two hourly periodic tasks run through Celery Beat + a worker (Redis broker):
+
+| Task | What it deletes |
+|---|---|
+| `cleanup_expired_tokens` | Verification tokens more than 7 days past their expiry |
+| `cleanup_unverified_users` | Accounts still `is_verified=false` more than 48h after creation (cascades to their posts/comments/likes) |
+
 ```bash
 # confirm the worker is alive and which tasks it registered
 docker compose logs celery-worker | grep -A5 "\[tasks\]"
 
-# confirm beat is scheduling the cleanup job
+# confirm beat is scheduling both cleanup jobs
 docker compose exec app python -c "from app.tasks.celery_app import celery_app; print(celery_app.conf.beat_schedule)"
 
 # task logs (email sends, cleanup runs)
@@ -185,7 +214,7 @@ hand-maintained API spec to keep in sync.
 # 1. Register
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","email":"alice@example.com","password":"supersecret"}'
+  -d '{"username":"alice","email":"alice@example.com","full_name":"Alice Smith","password":"supersecret"}'
 
 # 2. Verify (grab the link from `docker compose logs celery-worker`)
 curl "http://localhost:8000/api/v1/auth/verify-email?token=<token-from-log>"
@@ -200,13 +229,37 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 curl -X POST http://localhost:8000/api/v1/posts \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{"content":"hello world"}'
+  -d '{"title":"hello world","content":"i love rust"}'
 
-# 5. Feed of people you follow
+# 5. Comment on it
+curl -X POST http://localhost:8000/api/v1/posts/<post_id>/comments \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"content":"great post!"}'
+
+# 6. Like it (can't like your own - use a different account's token)
+curl -X POST http://localhost:8000/api/v1/posts/<post_id>/like -H "Authorization: Bearer <other_access_token>"
+
+# 7. Edit your post
+curl -X PATCH http://localhost:8000/api/v1/posts/<post_id> \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"hello world, updated"}'
+
+# 8. Edit your profile
+curl -X PATCH http://localhost:8000/api/v1/users/me \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"full_name":"Alice J. Smith"}'
+
+# 9. Feed of people you follow (bonus scope)
 curl http://localhost:8000/api/v1/feed -H "Authorization: Bearer <access_token>"
 
-# 6. Search & paginate
-curl "http://localhost:8000/api/v1/posts?q=hello&page=1&size=20&sort=newest"
+# 10. Search, filter by date, paginate
+curl "http://localhost:8000/api/v1/posts?q=hello&date_from=2026-01-01T00:00:00Z&page=1&size=20&sort=newest"
+
+# 11. Everyone's posts with their likers - GET /all
+curl "http://localhost:8000/api/v1/all?page=1&size=20"
 ```
 
 ## Git workflow

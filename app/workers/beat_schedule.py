@@ -5,4 +5,8 @@ BEAT_SCHEDULE = {
         "task": "cleanup_expired_tokens",
         "schedule": timedelta(hours=1),
     },
+    "cleanup-unverified-users": {
+        "task": "cleanup_unverified_users",
+        "schedule": timedelta(hours=1),
+    },
 }

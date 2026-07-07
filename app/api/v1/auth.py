@@ -17,7 +17,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(payload: UserRegisterIn, db: AsyncSession = Depends(get_db)) -> UserOut:
     service = AuthService(db)
     user = await service.register(
-        username=payload.username, email=payload.email, password=payload.password
+        username=payload.username,
+        email=payload.email,
+        full_name=payload.full_name,
+        password=payload.password,
     )
     return UserOut.model_validate(user)
 

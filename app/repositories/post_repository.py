@@ -1,6 +1,7 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, literal, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.models.like import Like
@@ -13,11 +14,30 @@ class PostRepository(BaseRepository[Post]):
     # Post.author is mapped with lazy="joined" (see app/models/post.py), so the
     # inherited get_by_id() already eager-loads the author in one query.
 
+    async def get_by_id_with_comments(self, id_: UUID) -> Post | None:
+        result = await self.session.scalars(
+            select(Post).options(selectinload(Post.comments)).where(Post.id == id_)
+        )
+        return result.first()
+
+    async def list_by_author_ids_with_likes(self, author_ids: list[UUID]) -> list[Post]:
+        if not author_ids:
+            return []
+        result = await self.session.scalars(
+            select(Post)
+            .where(Post.author_id.in_(author_ids))
+            .options(selectinload(Post.likes))
+            .order_by(Post.created_at)
+        )
+        return list(result)
+
     async def list_paginated(
         self,
         *,
         author_id: UUID | None,
         q: str | None,
+        date_from: datetime | None,
+        date_to: datetime | None,
         viewer_id: UUID | None,
         limit: int,
         offset: int,
@@ -27,7 +47,11 @@ class PostRepository(BaseRepository[Post]):
         if author_id is not None:
             filters.append(Post.author_id == author_id)
         if q:
-            filters.append(Post.content.ilike(f"%{q}%"))
+            filters.append(or_(Post.title.ilike(f"%{q}%"), Post.content.ilike(f"%{q}%")))
+        if date_from is not None:
+            filters.append(Post.created_at >= date_from)
+        if date_to is not None:
+            filters.append(Post.created_at <= date_to)
 
         liked_by_me_expr = (
             select(Like.id)

@@ -13,7 +13,12 @@ async def _verified_token(
 ) -> str:
     await client.post(
         "/api/v1/auth/register",
-        json={"username": username, "email": email, "password": "supersecret"},
+        json={
+            "username": username,
+            "email": email,
+            "full_name": f"{username.title()} Example",
+            "password": "supersecret",
+        },
     )
     await db_session.execute(update(User).where(User.email == email).values(is_verified=True))
     await db_session.commit()
@@ -34,17 +39,17 @@ async def test_feed_only_shows_followed_users_posts(client: AsyncClient, db_sess
 
     await client.post(
         "/api/v1/posts",
-        json={"content": "from quinn, should appear"},
+        json={"title": "from quinn", "content": "from quinn, should appear"},
         headers={"Authorization": f"Bearer {followed_token}"},
     )
     await client.post(
         "/api/v1/posts",
-        json={"content": "from ruth, should NOT appear"},
+        json={"title": "from ruth", "content": "from ruth, should NOT appear"},
         headers={"Authorization": f"Bearer {stranger_token}"},
     )
     await client.post(
         "/api/v1/posts",
-        json={"content": "from peter himself, should NOT appear"},
+        json={"title": "from peter", "content": "from peter himself, should NOT appear"},
         headers={"Authorization": f"Bearer {viewer_token}"},
     )
 
@@ -102,7 +107,7 @@ async def test_feed_query_count_is_constant_regardless_of_page_size(
         for i in range(n):
             await client.post(
                 "/api/v1/posts",
-                json={"content": f"post number {i}"},
+                json={"title": f"post number {i}", "content": f"post number {i}"},
                 headers={"Authorization": f"Bearer {author_token}"},
             )
 

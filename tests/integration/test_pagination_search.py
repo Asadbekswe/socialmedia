@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
@@ -13,7 +15,12 @@ async def _verified_token(
 ) -> str:
     await client.post(
         "/api/v1/auth/register",
-        json={"username": username, "email": email, "password": "supersecret"},
+        json={
+            "username": username,
+            "email": email,
+            "full_name": f"{username.title()} Example",
+            "password": "supersecret",
+        },
     )
     await db_session.execute(update(User).where(User.email == email).values(is_verified=True))
     await db_session.commit()
@@ -29,7 +36,11 @@ async def test_pagination_returns_correct_page_and_total(
     token = await _verified_token(client, db_session, "will", "will@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     for i in range(7):
-        await client.post("/api/v1/posts", json={"content": f"post {i}"}, headers=headers)
+        await client.post(
+            "/api/v1/posts",
+            json={"title": f"post number {i}", "content": f"post {i}"},
+            headers=headers,
+        )
 
     page1 = await client.get("/api/v1/posts?size=3&page=1")
     page2 = await client.get("/api/v1/posts?size=3&page=2")
@@ -47,20 +58,53 @@ async def test_pagination_returns_correct_page_and_total(
     assert ids_page1.isdisjoint(ids_page2)
 
 
-async def test_search_matches_expected_posts_only(client: AsyncClient, db_session: AsyncSession):
+async def test_search_matches_title_and_content(client: AsyncClient, db_session: AsyncSession):
     token = await _verified_token(client, db_session, "xena", "xena@example.com")
     headers = {"Authorization": f"Bearer {token}"}
-    await client.post("/api/v1/posts", json={"content": "I love pizza"}, headers=headers)
-    await client.post("/api/v1/posts", json={"content": "I love pasta"}, headers=headers)
-    await client.post("/api/v1/posts", json={"content": "nothing related"}, headers=headers)
+    await client.post(
+        "/api/v1/posts",
+        json={"title": "I love pizza", "content": "toppings are great"},
+        headers=headers,
+    )
+    await client.post(
+        "/api/v1/posts", json={"title": "food thoughts", "content": "I love pasta"}, headers=headers
+    )
+    await client.post(
+        "/api/v1/posts",
+        json={"title": "nothing related", "content": "nothing at all"},
+        headers=headers,
+    )
 
-    resp = await client.get("/api/v1/posts?q=pizza")
-    body = resp.json()
-    assert body["total"] == 1
-    assert body["items"][0]["content"] == "I love pizza"
+    by_title = await client.get("/api/v1/posts?q=pizza")
+    assert by_title.json()["total"] == 1
+    assert by_title.json()["items"][0]["title"] == "I love pizza"
 
-    resp_case_insensitive = await client.get("/api/v1/posts?q=PIZZA")
-    assert resp_case_insensitive.json()["total"] == 1
+    by_content = await client.get("/api/v1/posts?q=pasta")
+    assert by_content.json()["total"] == 1
+    assert by_content.json()["items"][0]["content"] == "I love pasta"
+
+    case_insensitive = await client.get("/api/v1/posts?q=PIZZA")
+    assert case_insensitive.json()["total"] == 1
+
+
+async def test_date_range_filter(client: AsyncClient, db_session: AsyncSession):
+    token = await _verified_token(client, db_session, "yara", "yara@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    await client.post(
+        "/api/v1/posts", json={"title": "a fresh post", "content": "content"}, headers=headers
+    )
+
+    future = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+
+    resp_future = await client.get("/api/v1/posts", params={"date_from": future})
+    assert resp_future.json()["total"] == 0
+
+    resp_past = await client.get("/api/v1/posts", params={"date_from": past})
+    assert resp_past.json()["total"] == 1
+
+    resp_before_now = await client.get("/api/v1/posts", params={"date_to": past})
+    assert resp_before_now.json()["total"] == 0
 
 
 async def test_invalid_page_size_rejected(client: AsyncClient):

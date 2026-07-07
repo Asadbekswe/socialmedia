@@ -13,7 +13,7 @@ class AuthService:
         self.users = UserRepository(session)
         self.verification = VerificationService(session)
 
-    async def register(self, *, username: str, email: str, password: str) -> User:
+    async def register(self, *, username: str, email: str, full_name: str, password: str) -> User:
         if await self.users.get_by_email(email) is not None:
             raise ConflictException("Email already registered")
         if await self.users.get_by_username(username) is not None:
@@ -22,6 +22,7 @@ class AuthService:
         user = await self.users.create(
             username=username,
             email=email,
+            full_name=full_name,
             hashed_password=hash_password(password),
         )
         await self.session.flush()
