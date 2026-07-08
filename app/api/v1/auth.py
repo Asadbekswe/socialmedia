@@ -31,7 +31,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> TokenOut:
     service = AuthService(db)
-    access_token = await service.authenticate(email=form_data.username, password=form_data.password)
+    access_token = await service.authenticate(identifier=form_data.username, password=form_data.password)
     return TokenOut(access_token=access_token)
 
 

@@ -29,8 +29,10 @@ class AuthService:
         await self.verification.issue_and_send(user)
         return user
 
-    async def authenticate(self, *, email: str, password: str) -> str:
-        user = await self.users.get_by_email(email)
+    async def authenticate(self, *, identifier: str, password: str) -> str:
+        user = await self.users.get_by_email(identifier)
+        if user is None:
+            user = await self.users.get_by_username(identifier)
         if user is None or not verify_password(password, user.hashed_password):
             raise UnauthorizedException("Invalid email or password")
         if not user.is_active:
